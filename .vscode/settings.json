@@ -1,0 +1,6 @@
+{
+  "go.testEnvVars": {
+    "CGO_CPPFLAGS": "-I/opt/homebrew/opt/z3/include",
+    "CGO_LDFLAGS": "-L/opt/homebrew/opt/z3/lib"
+  }
+}
