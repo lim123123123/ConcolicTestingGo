@@ -23,7 +23,7 @@ func (cell structFieldVariable) AddField(field *types.Var) structFieldVariable {
 	return structFieldVariable{
 		Value:     cell.Value,
 		fieldName: joinWithDot(cell.fieldName, field.Name()),
-		fieldType: field.Type(),
+		fieldType: field.Type().Underlying(),
 	}
 }
 
@@ -86,7 +86,6 @@ func (analyzer *FunctionFlowAnalyzer) handleAllocInstr(
 	})
 }
 
-// TODO: control dependencies!
 // There are 3 cases:
 // The first one is when the store happens to a location that was initially allocated as a basic type
 // that means that we are trying to store sth in a pointer to a basic type
@@ -112,12 +111,13 @@ func (analyzer *FunctionFlowAnalyzer) handleStoreInstr(
 		analyzer.getOrCreateFlow(pointerVar).Merge(
 			analyzer.getOrCreateFlow(store.Val),
 		)
+		analyzer.mergeCtrlDependencies(pointerVar, ctrl)
 	case *types.Struct:
 		// The pointer points to a struct, so right side is a struct as well
 		// we need to walk all the variables related to the struct fields
 		analyzer.assignOneStructToAnother(typedPointerVar, pointerVar, structFieldVariable{
 			Value: store.Val,
-		})
+		}, ctrl)
 	default:
 		panic("unknown ptr type in handleStoreInstr")
 	}
@@ -153,12 +153,14 @@ func (analyzer *FunctionFlowAnalyzer) assignOneStructToAnother(
 	structType *types.Struct,
 	left structFieldVariable,
 	right structFieldVariable,
+	ctrl *ssaValueSet,
 ) {
 	walkStructFields(structType, structFieldVariable{}, func(cell structFieldVariable) {
 		// Here we just have a path that was gently build for us
 		flowOfLeft := analyzer.getOrCreateFlow(left.Merge(cell))
 		flowOfRight := analyzer.getOrCreateFlow(right.Merge(cell))
 		flowOfLeft.Merge(flowOfRight)
+		analyzer.mergeCtrlDependencies(left.Merge(cell), ctrl)
 	})
 }
 
@@ -183,7 +185,6 @@ func walkStructFields(
 	}
 }
 
-// TODO: control dependencies!
 // Handle t = &x.field
 // Now we just do nothing, as we try to statically resolve all the pointers through findPointsToForValue
 // However, this function should update the over approximation of points-to relation, by adding a new
@@ -192,8 +193,8 @@ func (analyzer *FunctionFlowAnalyzer) handleFieldAddrInstr(faInstr *ssa.FieldAdd
 	// Empty on purpose
 }
 
-// TODO: control dependencies
 func (analyzer *FunctionFlowAnalyzer) handleUnOp(unOp *ssa.UnOp, ctrl *ssaValueSet) {
+	// TODO: if we have a constant here, we should still add control dependencies
 	if _, ok := unOp.X.(*ssa.Const); ok {
 		// If we are assigning a constant - there are no data dependencies
 		return
@@ -202,6 +203,7 @@ func (analyzer *FunctionFlowAnalyzer) handleUnOp(unOp *ssa.UnOp, ctrl *ssaValueS
 	if unOp.Op != token.MUL {
 		// This is not a load operation, so it's just an arithmetic operation
 		analyzer.getOrCreateFlow(unOp).Merge(analyzer.getOrCreateFlow(unOp.X))
+		analyzer.mergeCtrlDependencies(unOp, ctrl)
 	} else {
 		analyzer.handleLoadInstr(unOp, ctrl)
 	}
@@ -223,6 +225,7 @@ func (analyzer *FunctionFlowAnalyzer) handleLoadInstr(loadInstr *ssa.UnOp, ctrl 
 		analyzer.getOrCreateFlow(loadInstr).Merge(
 			analyzer.getOrCreateFlow(fieldVar),
 		)
+		analyzer.mergeCtrlDependencies(loadInstr, ctrl)
 	case *types.Struct:
 		// We need to assign one struct to an another
 		// t here is not a pointer, it's just a variable of type struct, so it's easy to create
@@ -234,6 +237,7 @@ func (analyzer *FunctionFlowAnalyzer) handleLoadInstr(loadInstr *ssa.UnOp, ctrl 
 			analyzer.getOrCreateFlow(tVar).Merge(
 				analyzer.getOrCreateFlow(xVar),
 			)
+			analyzer.mergeCtrlDependencies(tVar, ctrl)
 		})
 	default:
 		panic("unknown field type in handleLoadInstr")

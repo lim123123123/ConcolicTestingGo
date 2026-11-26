@@ -25,14 +25,15 @@ type OuterStruct struct {
 }
 
 // Test struct = struct assignment
-func TestStructAssignment() {
+func TestStructAssignment(aVal, bVal int) {
 	a := EmbeddedStruct{}
 	b := OuterStruct{}
-	a.a = 1
+	a.a = aVal
+	a.b = bVal
 	b.e = a
 }
 
-func UseSimpleStruct(l, r SimpleStructWithTwoFields) (int, int) {
+func StructArguments(l, r SimpleStructWithTwoFields) (int, int) {
 	var a, b int
 	if l.a == r.a {
 		a = 1
@@ -60,17 +61,17 @@ func UseStructs(left, right MyStruct) (int, int) {
 	a := 0
 	b := 0
 	left.Nested.Int = 3
-	// if left.Nested.Int == 1 && right.Bool {}
-	// if left.Nested.Int == 1 {
-	// 	if right.Bool {
-	// 		a = 1
-	// 	}
-	// }
+	if left.Nested.Int == 1 && right.Bool {}
+	if left.Nested.Int == 1 {
+		if right.Bool {
+			a = 1
+		}
+	}
 
-	// if left.Nested.String == "42" {
-	// 	if right.AnotherInt == 1 {
-	// 		b = 1
-	// 	}
-	// }
+	if left.Nested.String == "42" {
+		if right.AnotherInt == 1 {
+			b = 1
+		}
+	}
 	return a, b
 }

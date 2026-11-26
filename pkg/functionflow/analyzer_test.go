@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap/zaptest"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -128,21 +129,21 @@ var flowTestCases = []struct {
 	// 	},
 	// 	wantBlocks: [][]string{{"x", "y"}},
 	// },
-	// {
-	// 	funcName: "IntPointers",
-	// 	wantFlow: map[string][]string{
-	// 		"t0": {"x"}, "t1": {"y"},
-	// 		"t2": {"x"}, "t3": {"x"},
-	// 		"t4": {"x", "y"},
-	// 		"t5": {"x", "y"},
-	// 		"t6": {"x"},
-	// 		"t7": {"x", "y"},
-	// 		"t8": {"y"},
-	// 		"t9": {"x", "y"},
-	// 		"x":  {"x"}, "y": {"y"},
-	// 	},
-	// 	wantBlocks: [][]string{{"x", "y"}},
-	// },
+	{
+		funcName: "IntPointers",
+		wantFlow: map[string][]string{
+			"t0": {"x"}, "t1": {"y"},
+			"t2": {"x"}, "t3": {"x"},
+			"t4": {"x", "y"},
+			"t5": {"x", "y"},
+			"t6": {"x"},
+			"t7": {"x", "y"},
+			"t8": {"y"},
+			"t9": {"x", "y"},
+			"x":  {"x"}, "y": {"y"},
+		},
+		wantBlocks: [][]string{{"x", "y"}},
+	},
 	// {
 	// 	funcName: "CreateStruct",
 	// 	wantFlow: map[string][]string{
@@ -153,9 +154,67 @@ var flowTestCases = []struct {
 	// 		"a":    {"a"}, "b": {"b"},
 	// 	},
 	// },
-	{
-		funcName: "TestStructAssignment",
-	},
+	// {
+	// 	funcName: "TestStructAssignment",
+	// 	wantFlow: map[string][]string{
+	// 		"t0.a":   {"aVal"},
+	// 		"t0.b":   {"bVal"},
+	// 		"t1.e.a": {"aVal"},
+	// 		"t1.e.b": {"bVal"},
+	// 		"t1.c":   {},
+	// 		"t4.a":   {"aVal"},
+	// 		"t4.b":   {"bVal"},
+	// 		"aVal": {"aVal"}, "bVal": {"bVal"},
+	// 	},
+	// },
+	// {
+	// 	funcName: "StructArguments",
+	// 	wantFlow: map[string][]string{
+	// 		"t0.a": {"l.a"},
+	// 		"t0.b": {"l.b"},
+	// 		"t1.a": {"r.a"},
+	// 		"t1.b": {"r.b"},
+	// 		"t3":   {"l.a"},
+	// 		"t5":   {"r.a"},
+	// 		"t6":   {"l.a", "r.a"},
+	// 		"t7":   {"l.a", "r.a"},
+	// 		"t9":   {"l.b"},
+	// 		"t11":  {"r.b"},
+	// 		"t12":  {"l.b", "r.b"},
+	// 		"t13":  {"l.b", "r.b"},
+	// 		"l.a":  {"l.a"}, "l.b": {"l.b"},
+	// 		"r.a": {"r.a"}, "r.b": {"r.b"},
+	// 	},
+	// },
+	// {
+	// 	funcName: "UseStructs",
+	// 	wantFlow: map[string][]string{
+	// 		"t0.Nested.String":   {"left.Nested.String"},
+	// 		"t0.Nested.Int":      {"left.Nested.Int"},
+	// 		"t0.AnotherInt":      {"left.AnotherInt"},
+	// 		"t0.Bool":            {"left.Bool"},
+	// 		"t1.Nested.String":   {"right.Nested.String"},
+	// 		"t1.Nested.Int":      {"right.Nested.Int"},
+	// 		"t1.AnotherInt":      {"right.AnotherInt"},
+	// 		"t1.Bool":            {"right.Bool"},
+	// 		"t6":                 {"left.Nested.Int"},
+	// 		"t7":                 {"left.Nested.Int"},
+	// 		"t10":                {"left.Nested.Int"},
+	// 		"t11":                {"left.Nested.Int"},
+	// 		"t13":                {"left.Nested.Int", "right.Bool"},
+	// 		"t15":                {"left.Nested.Int", "right.Bool"},
+	// 		"t16":                {"left.Nested.Int", "right.Bool"},
+	// 		"t19":                {"left.Nested.String"},
+	// 		"t20":                {"left.Nested.String"},
+	// 		"t22":                {"left.Nested.String", "right.AnotherInt"},
+	// 		"t23":                {"left.Nested.String", "right.AnotherInt"},
+	// 		"t24":                {"left.Nested.String", "right.AnotherInt"},
+	// 		"left.Nested.String": {"left.Nested.String"}, "left.Nested.Int": {"left.Nested.Int"},
+	// 		"left.AnotherInt": {"left.AnotherInt"}, "left.Bool": {"left.Bool"},
+	// 		"right.Nested.String": {"right.Nested.String"}, "right.Nested.Int": {"right.Nested.Int"},
+	// 		"right.AnotherInt": {"right.AnotherInt"}, "right.Bool": {"right.Bool"},
+	// 	},
+	// },
 }
 
 func TestFindFlow(t *testing.T) {
@@ -165,6 +224,7 @@ func TestFindFlow(t *testing.T) {
 				"./testdata/branching",
 				tt.funcName,
 				WithDumpSSAToFile("./testFileSSA.txt"),
+				WithLogger(zaptest.NewLogger(t).Sugar()),
 			)
 			require.NoError(t, err)
 
@@ -197,21 +257,10 @@ func TestExtractBlocks(t *testing.T) {
 	}
 }
 
-func TestStructs(t *testing.T) {
-	analyzer, err := NewAnalyzer("./testdata/branching", "UseStructs", WithDumpSSAToFile("reconcileStructs.txt"))
-	require.NoError(t, err)
-
-	analyzer.FindFlow()
-	// analyzer.ExtractBlocks()
-}
-
 // inputsOfFlow keeps only the function parameters in every flow set and prints them
 // by name, so the result can be compared with a hand written expectation.
 func inputsOfFlow(params []*ssa.Parameter, flow map[ssa.Value]*ssaValueSet) map[string][]string {
-	isParam := make(map[ssa.Value]bool, len(params))
-	for _, param := range params {
-		isParam[param] = true
-	}
+	isParam := getSSAValuesByParams(params)
 
 	result := make(map[string][]string, len(flow))
 	for val, set := range flow {
@@ -226,4 +275,24 @@ func inputsOfFlow(params []*ssa.Parameter, flow map[ssa.Value]*ssaValueSet) map[
 	}
 
 	return result
+}
+
+// getSSAValuesByParams returns the set of flow values that represent params.
+// A struct param is tracked as one variable per leaf field (l.a, l.b, ...),
+// so those field variables are included instead of just the param itself.
+func getSSAValuesByParams(params []*ssa.Parameter) map[ssa.Value]bool {
+	values := make(map[ssa.Value]bool, len(params))
+	for _, param := range params {
+		isStruct, structType := isStructType(param.Type())
+		if !isStruct {
+			values[param] = true
+			continue
+		}
+
+		walkStructFields(structType, structFieldVariable{Value: param}, func(cell structFieldVariable) {
+			values[cell] = true
+		})
+	}
+
+	return values
 }

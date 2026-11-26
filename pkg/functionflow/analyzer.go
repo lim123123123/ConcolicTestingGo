@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"go.uber.org/zap"
 	"golang.org/x/tools/go/ssa"
 
 	"github.com/lim123123123/concolic-testing/internal/bbgraph"
@@ -20,7 +21,9 @@ type FunctionFlowAnalyzer struct {
 }
 
 func NewAnalyzer(pathToPkg, funcName string, opts ...FunctionFlowAnalyzerOption) (*FunctionFlowAnalyzer, error) {
-	config := functionFlowAnalyzerConfig{}
+	config := functionFlowAnalyzerConfig{
+		Logger: zap.L().Sugar(),
+	}
 	for _, opt := range opts {
 		opt(&config)
 	}
@@ -109,6 +112,12 @@ func (analyzer *FunctionFlowAnalyzer) getOrCreateFlow(v ssa.Value) *ssaValueSet 
 	return analyzer.flow[v]
 }
 
+func (analyzer *FunctionFlowAnalyzer) mergeCtrlDependencies(target ssa.Value, dependencies *ssaValueSet) {
+	for dep := range dependencies.All() {
+		analyzer.getOrCreateFlow(target).Merge(analyzer.getOrCreateFlow(dep))
+	}
+}
+
 // exploreBlock updates flow for every instruction of blk under the controllers
 // stored in controlFlowDep[blk], then recurses into all successors, so both arms
 // of an if are explored. A visited block is explored again only if new controllers
@@ -139,13 +148,9 @@ func (analyzer *FunctionFlowAnalyzer) exploreBlock(
 				analyzer.getOrCreateFlow(tInstr).Merge(analyzer.getOrCreateFlow(tInstr.Y))
 			}
 
-			for dep := range ctrl.All() {
-				analyzer.getOrCreateFlow(tInstr).Merge(analyzer.getOrCreateFlow(dep))
-			}
+			analyzer.mergeCtrlDependencies(tInstr, ctrl)
 		case *ssa.If:
-			for dep := range ctrl.All() {
-				analyzer.getOrCreateFlow(tInstr.Cond).Merge(analyzer.getOrCreateFlow(dep))
-			}
+			analyzer.mergeCtrlDependencies(tInstr.Cond, ctrl)
 			outgoing.AddValue(tInstr.Cond)
 		case *ssa.Phi:
 			// The phi node is a bit special here, in essence it depends on data dependencies
@@ -160,9 +165,7 @@ func (analyzer *FunctionFlowAnalyzer) exploreBlock(
 				}
 
 				// Now we need to add the flow from ctrl dependencies
-				for ctrlDep := range analyzer.ctrlOf(prevBlockID).All() {
-					analyzer.getOrCreateFlow(tInstr).Merge(analyzer.getOrCreateFlow(ctrlDep))
-				}
+				analyzer.mergeCtrlDependencies(tInstr, analyzer.ctrlOf(prevBlockID))
 
 				// ctrlOf(pred) does not contain the condition of the if that ends pred itself:
 				// it is only handed to the successors. So an edge that leaves an if block directly

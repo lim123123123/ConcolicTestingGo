@@ -25,7 +25,7 @@ So for full correctness, we need to maintain an over-approximation of the real p
 On *t0 = t1, we must update the flow of every variable that t0 may point to with flow(t1).
 On t0 = *t1, we must update the flow of t0 with the flow of every value that t1 may point to.
 
-In practice, in most cases the variable a pointer points to can be easily resolved, though this isn't true in general. So for now, instead of maintaining an approximation of the points-to relation, we just use the buildCanonicalName function to find exactly which variable the pointer points to.
+In practice, in most cases the variable a pointer points to can be easily resolved, though this isn't true in general. So for now, instead of maintaining an approximation of the points-to relation, we just use the findPointsToForValue function to find exactly which variable the pointer points to.
 
 TODO: does all of this work for **int?
 
@@ -35,7 +35,7 @@ Go SSA has a dedicated struct type (types.Struct). To refer to a field of a stru
 
 This means that, in general, SSA treats structs as single values. That doesn't suit our goal of analyzing Kubernetes operators, because all the inputs whose dependencies we want to find are represented as structs.
 
-So instead, the flow analyzer represents a struct as a union of variables, each corresponding to a leaf field of the struct. Each such field is represented by a structFieldCell. For instance, given the following structs:
+So instead, the flow analyzer represents a struct as a union of variables, each corresponding to a leaf field of the struct. Each such field is represented by a structFieldVariable. For instance, given the following structs:
 ```
 type MyAwesomeStructInner struct {
     a int
@@ -78,10 +78,28 @@ The correctness theorem states the following: if a location x is reachable by an
 
 The proof is by contradiction and essentially goes as follows: take a path to location x from the execution in which all variables are concolic, then drop all operations along this path that don't affect the reachability of x. The result is called a path slice (described in the second paper; see the Basics section above). Now you must show that all variables that appear in any operation of the path slice end up in the same block of the partition.
 
-The last part is where the definition of flow becomes important, as the block merge is based on the calculated flow and this part is skipped in the original proof. 
+The last part is where the definition of flow becomes important, since the block merge is based on the calculated flow, and this part is skipped in the original proof.
 
 However, the second paper, which explains how to build such a path slice, helps significantly: once you understand how path slices are built, you understand which variables will appear in them.
 
 Essentially, the path slicing algorithm takes a path to the location with all its operations and drops the ones that are unrelated to the reachability of the final location. In other words, you drop the ifs that the location post-dominates and that don't affect the values that the non-post-dominated ifs depend on. 
 
 It's also interesting that neither paper says whether the proposed partition or the proposed path slice is minimal. However, it's clear that you can't find the optimal one with static analysis in general (you can't compute the real points-to relation statically).
+
+## Flow calculation
+
+Based on the above, the property we want to ensure for the blocks is the following: if there is a path P to location L in full concolic execution, then L is also reachable with one of the blocks.
+
+Of course, here we do static analysis instead of concolic execution, so we can't find all the feasible paths that end at L. Instead, we over-approximate by considering all paths in the control flow graph that end at L, even though some of these paths may be infeasible.
+
+So the property we want from our blocks is the following: for any path P in the CFG ending at L, all the variables in the path slice for P must be in the same block. That means that for each location we would have to traverse all of its path slices, but luckily, we know the structure of all these path slices.
+
+First, we know that every if that L doesn't post-dominate will be in each path slice. The set of these if conditions is exactly the control dependency set that we calculate for each basic block. We also know all the variables in each condition, so all of them must be in the same block. All the variables they data-depend on must be in this block as well. More importantly, if one of these variables is modified along some path, that path's condition must be in the same block too, because there may be a path through this condition that ends at our location. These are all the variables that must be in the same block, as they could appear in path slices for the same location.
+
+Of course, we don't want to recalculate this for every location, so we have the flow map, which precomputes it: for each variable x, it stores all the data dependencies of x and all the if conditions under which x could be modified (because such an if could be in a path slice).
+
+This explains:
+1. Why we calculate flow only for variables and not for locations: we only need the flow for if conditions.
+2. How to calculate flow in different situations. More precisely, it explains why we need to add all ctrl dependencies to a variable's flow (because there will be a path, and a path slice, through these dependencies). It also explains the semantics of the phi node: it should depend on all of its options, as there could be a path through any of them.
+
+TODO: we may not actually need ctrl dependencies for a variable assignment t = a, because t can only be used inside this scope or later in a phi node inside its own scope. We could add the dependencies for ifs manually, and for a phi node we add them manually as well. 
